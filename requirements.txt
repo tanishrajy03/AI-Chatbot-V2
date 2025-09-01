@@ -1,7 +1,0 @@
-fastapi
-uvicorn
-litellm
-python-dotenv
-pinecone-client
-sentence-transformers
-torch

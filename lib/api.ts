@@ -1,5 +1,5 @@
 export async function sendMessage(message: string, sessionId = "default") {
-  const res = await fetch("https://ai-chatbot-v2-i76m.onrender.com/chat", {
+  const res = await fetch("https://my-ai-chatbot-n93k.onrender.com", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, session_id: sessionId }),

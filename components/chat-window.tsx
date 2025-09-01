@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,20 +11,20 @@ type ChatMessage = { role: "user" | "assistant"; content: string }
 
 async function extractPdfText(file: File): Promise<string> {
   try {
-    // dynamic import to avoid SSR issues
     const pdfjs = await import("pdfjs-dist/build/pdf")
-    // @ts-ignore - worker global
-    pdfjs.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js"
+    // @ts-ignore
+    pdfjs.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js"
     const arrayBuffer = await file.arrayBuffer()
     // @ts-ignore
     const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise
     let text = ""
-    const maxPages = Math.min(pdf.numPages, 10) // limit for performance
+    const maxPages = Math.min(pdf.numPages, 10)
     for (let i = 1; i <= maxPages; i++) {
       const page = await pdf.getPage(i)
       const content = await page.getTextContent()
       text += content.items.map((it: any) => ("str" in it ? it.str : "")).join(" ") + "\n"
-      if (text.length > 20000) break // safety cap
+      if (text.length > 20000) break
     }
     return text.trim()
   } catch {
@@ -66,7 +65,6 @@ export default function ChatWindow({
 
   useEffect(() => {
     saveMessages(sessionId, messages)
-    // auto title when first user message arrives
     if (messages.length === 1 && messages[0].role === "user" && onFirstUserMessage) {
       const title = messages[0].content.slice(0, 40)
       onFirstUserMessage(title)
@@ -98,15 +96,17 @@ export default function ChatWindow({
     const content = input.trim()
     if ((!content && files.length === 0) || isLoading) return
 
-    // build attachment context
+    // 🔹 Build file context
     let attachmentContext = ""
     const pdfs = files.filter((f) => f.type === "application/pdf")
     if (pdfs.length) {
       const pdfExtracts = await Promise.all(
         pdfs.map(async (pdf) => {
           const txt = await extractPdfText(pdf)
-          return `PDF: ${pdf.name}\n${txt ? txt.slice(0, 8000) : "[Text extraction unavailable]"}`
-        }),
+          return `PDF: ${pdf.name}\n${
+            txt ? txt.slice(0, 8000) : "[Text extraction unavailable]"
+          }`
+        })
       )
       attachmentContext += pdfExtracts.map((s) => `\n\n${s}`).join("")
     }
@@ -119,23 +119,33 @@ export default function ChatWindow({
       (content ? content : "Please analyze the attached files.") +
       (attachmentContext ? `\n\nAttachments:\n${attachmentContext}` : "")
 
-    const draft = [...messages, { role: "user", content: mergedUserContent } as ChatMessage]
+    const draft = [...messages, { role: "user", content: mergedUserContent }]
     setMessages(draft)
     setInput("")
     setFiles([])
     setIsLoading(true)
 
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input: mergedUserContent, history: draft }),
-      })
+      // 🔹 Call FastAPI backend
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/chat`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: mergedUserContent, session_id: sessionId }),
+        }
+      )
+
       const data = await res.json()
-      const reply = (data?.reply as string) ?? data?.response ?? ""
-      setMessages((prev) => [...prev, { role: "assistant", content: reply || "No response." }])
+      const reply = data?.response ?? "No response."
+
+      setMessages((prev) => [...prev, { role: "assistant", content: reply }])
     } catch (err) {
-      setMessages((prev) => [...prev, { role: "assistant", content: "Sorry, something went wrong. Please try again." }])
+      console.error("Chat error:", err)
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "⚠️ Sorry, something went wrong. Please try again." },
+      ])
     } finally {
       setIsLoading(false)
     }
@@ -162,7 +172,7 @@ export default function ChatWindow({
           </button>
         </span>
       )),
-    [files],
+    [files]
   )
 
   return (
@@ -170,11 +180,10 @@ export default function ChatWindow({
       {isEmpty ? (
         <div className="flex-1 grid place-items-center px-4">
           <div className="text-center max-w-xl">
-            <h1 className="mb-6 text-2xl md:text-3xl font-semibold text-balance">Where should we begin?</h1>
+            <h1 className="mb-6 text-2xl md:text-3xl font-semibold">Where should we begin?</h1>
             <form
               onSubmit={sendMessage}
               className="flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-2"
-              aria-label="Start a conversation"
             >
               <input
                 ref={fileInputRef}
@@ -184,12 +193,9 @@ export default function ChatWindow({
                 accept="image/*,application/pdf"
                 onChange={onFileChange}
               />
-              <Button type="button" variant="ghost" size="icon" aria-label="Attach file" onClick={onAttachClick}>
+              <Button type="button" variant="ghost" size="icon" onClick={onAttachClick}>
                 <Paperclip className="h-4 w-4" />
               </Button>
-              <label htmlFor="chat-input" className="sr-only">
-                Ask anything
-              </label>
               <Input
                 id="chat-input"
                 value={input}
@@ -197,13 +203,9 @@ export default function ChatWindow({
                 placeholder="Ask anything"
                 className="border-0 shadow-none focus-visible:ring-0 bg-transparent"
               />
-              <Button type="button" variant="ghost" size="icon" aria-label="Voice input (coming soon)">
-                <Mic className="h-4 w-4" />
-              </Button>
               <Button
                 type="submit"
                 className="rounded-full bg-emerald-600 hover:bg-emerald-700 text-white"
-                aria-label="Send message"
                 disabled={(!!input.trim() === false && !hasFiles) || isLoading}
               >
                 <Send className="h-4 w-4" />
@@ -224,7 +226,6 @@ export default function ChatWindow({
             <form
               onSubmit={sendMessage}
               className="flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-2"
-              aria-label="Message composer"
             >
               <input
                 ref={fileInputRef}
@@ -234,12 +235,9 @@ export default function ChatWindow({
                 accept="image/*,application/pdf"
                 onChange={onFileChange}
               />
-              <Button type="button" variant="ghost" size="icon" aria-label="Attach file" onClick={onAttachClick}>
+              <Button type="button" variant="ghost" size="icon" onClick={onAttachClick}>
                 <Paperclip className="h-4 w-4" />
               </Button>
-              <label htmlFor="composer-input" className="sr-only">
-                Message
-              </label>
               <Input
                 id="composer-input"
                 value={input}
@@ -247,13 +245,9 @@ export default function ChatWindow({
                 placeholder="Send a message"
                 className="border-0 shadow-none focus-visible:ring-0 bg-transparent"
               />
-              <Button type="button" variant="ghost" size="icon" aria-label="Voice input (coming soon)">
-                <Mic className="h-4 w-4" />
-              </Button>
               <Button
                 type="submit"
                 className="rounded-full bg-emerald-600 hover:bg-emerald-700 text-white"
-                aria-label="Send"
                 disabled={(!!input.trim() === false && !hasFiles) || isLoading}
               >
                 <Send className="h-4 w-4" />

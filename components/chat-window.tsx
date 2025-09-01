@@ -1,6 +1,7 @@
 "use client"
 
 import type React from "react"
+
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -11,20 +12,20 @@ type ChatMessage = { role: "user" | "assistant"; content: string }
 
 async function extractPdfText(file: File): Promise<string> {
   try {
+    // dynamic import to avoid SSR issues
     const pdfjs = await import("pdfjs-dist/build/pdf")
-    // @ts-ignore
-    pdfjs.GlobalWorkerOptions.workerSrc =
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js"
+    // @ts-ignore - worker global
+    pdfjs.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.js"
     const arrayBuffer = await file.arrayBuffer()
     // @ts-ignore
     const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise
     let text = ""
-    const maxPages = Math.min(pdf.numPages, 10)
+    const maxPages = Math.min(pdf.numPages, 10) // limit for performance
     for (let i = 1; i <= maxPages; i++) {
       const page = await pdf.getPage(i)
       const content = await page.getTextContent()
       text += content.items.map((it: any) => ("str" in it ? it.str : "")).join(" ") + "\n"
-      if (text.length > 20000) break
+      if (text.length > 20000) break // safety cap
     }
     return text.trim()
   } catch {
@@ -65,6 +66,7 @@ export default function ChatWindow({
 
   useEffect(() => {
     saveMessages(sessionId, messages)
+    // auto title when first user message arrives
     if (messages.length === 1 && messages[0].role === "user" && onFirstUserMessage) {
       const title = messages[0].content.slice(0, 40)
       onFirstUserMessage(title)
@@ -96,17 +98,15 @@ export default function ChatWindow({
     const content = input.trim()
     if ((!content && files.length === 0) || isLoading) return
 
-    // 🔹 Build file context
+    // build attachment context
     let attachmentContext = ""
     const pdfs = files.filter((f) => f.type === "application/pdf")
     if (pdfs.length) {
       const pdfExtracts = await Promise.all(
         pdfs.map(async (pdf) => {
           const txt = await extractPdfText(pdf)
-          return `PDF: ${pdf.name}\n${
-            txt ? txt.slice(0, 8000) : "[Text extraction unavailable]"
-          }`
-        })
+          return `PDF: ${pdf.name}\n${txt ? txt.slice(0, 8000) : "[Text extraction unavailable]"}`
+        }),
       )
       attachmentContext += pdfExtracts.map((s) => `\n\n${s}`).join("")
     }
@@ -119,33 +119,64 @@ export default function ChatWindow({
       (content ? content : "Please analyze the attached files.") +
       (attachmentContext ? `\n\nAttachments:\n${attachmentContext}` : "")
 
-    const draft = [...messages, { role: "user", content: mergedUserContent }]
+    const draft = [...messages, { role: "user", content: mergedUserContent } as ChatMessage]
     setMessages(draft)
     setInput("")
     setFiles([])
     setIsLoading(true)
 
     try {
-      // 🔹 Call FastAPI backend
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/chat`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: mergedUserContent, session_id: sessionId }),
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify({ input: mergedUserContent, history: draft }),
+      })
+
+      setMessages((prev) => [...prev, { role: "assistant", content: "" }])
+
+      const reader = res.body?.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+
+      if (!reader) throw new Error("No stream")
+
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        const parts = buffer.split("\n\n")
+        buffer = parts.pop() || ""
+        for (const chunk of parts) {
+          const line = chunk.split("\n").find((l) => l.startsWith("data:"))
+          if (!line) continue
+          const payload = line.slice(5).trim()
+          if (payload === "[DONE]") continue
+          setMessages((prev) => {
+            const next = prev.slice()
+            const last = next[next.length - 1]
+            if (last?.role === "assistant") {
+              last.content += payload
+            }
+            return next
+          })
         }
-      )
-
-      const data = await res.json()
-      const reply = data?.response ?? "No response."
-
-      setMessages((prev) => [...prev, { role: "assistant", content: reply }])
+      }
+      if (buffer) {
+        const payload = buffer.replace(/^data:\s*/gm, "").trim()
+        if (payload) {
+          setMessages((prev) => {
+            const next = prev.slice()
+            const last = next[next.length - 1]
+            if (last?.role === "assistant") {
+              last.content += payload
+            }
+            return next
+          })
+        }
+      }
     } catch (err) {
-      console.error("Chat error:", err)
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "⚠️ Sorry, something went wrong. Please try again." },
-      ])
+      setMessages((prev) => [...prev, { role: "assistant", content: "Sorry, something went wrong. Please try again." }])
     } finally {
       setIsLoading(false)
     }
@@ -172,7 +203,7 @@ export default function ChatWindow({
           </button>
         </span>
       )),
-    [files]
+    [files],
   )
 
   return (
@@ -180,10 +211,11 @@ export default function ChatWindow({
       {isEmpty ? (
         <div className="flex-1 grid place-items-center px-4">
           <div className="text-center max-w-xl">
-            <h1 className="mb-6 text-2xl md:text-3xl font-semibold">Where should we begin?</h1>
+            <h1 className="mb-6 text-2xl md:text-3xl font-semibold text-balance">Where should we begin?</h1>
             <form
               onSubmit={sendMessage}
               className="flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-2"
+              aria-label="Start a conversation"
             >
               <input
                 ref={fileInputRef}
@@ -193,19 +225,27 @@ export default function ChatWindow({
                 accept="image/*,application/pdf"
                 onChange={onFileChange}
               />
-              <Button type="button" variant="ghost" size="icon" onClick={onAttachClick}>
+              <Button type="button" variant="ghost" size="icon" aria-label="Attach file" onClick={onAttachClick}>
                 <Paperclip className="h-4 w-4" />
               </Button>
+              <label htmlFor="chat-input" className="sr-only">
+                Ask anything
+              </label>
               <Input
                 id="chat-input"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Ask anything"
-                className="border-0 shadow-none focus-visible:ring-0 bg-transparent"
+                className="border-0 shadow-none focus-visible:ring-0 bg-transparent text-base md:text-sm"
+                enterKeyHint="send"
               />
+              <Button type="button" variant="ghost" size="icon" aria-label="Voice input (coming soon)">
+                <Mic className="h-4 w-4" />
+              </Button>
               <Button
                 type="submit"
-                className="rounded-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                className="rounded-full bg-purple-600 hover:bg-purple-700 text-white"
+                aria-label="Send message"
                 disabled={(!!input.trim() === false && !hasFiles) || isLoading}
               >
                 <Send className="h-4 w-4" />
@@ -226,6 +266,7 @@ export default function ChatWindow({
             <form
               onSubmit={sendMessage}
               className="flex items-center gap-2 rounded-full border border-border bg-muted px-3 py-2"
+              aria-label="Message composer"
             >
               <input
                 ref={fileInputRef}
@@ -235,19 +276,27 @@ export default function ChatWindow({
                 accept="image/*,application/pdf"
                 onChange={onFileChange}
               />
-              <Button type="button" variant="ghost" size="icon" onClick={onAttachClick}>
+              <Button type="button" variant="ghost" size="icon" aria-label="Attach file" onClick={onAttachClick}>
                 <Paperclip className="h-4 w-4" />
               </Button>
+              <label htmlFor="composer-input" className="sr-only">
+                Message
+              </label>
               <Input
                 id="composer-input"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Send a message"
-                className="border-0 shadow-none focus-visible:ring-0 bg-transparent"
+                className="border-0 shadow-none focus-visible:ring-0 bg-transparent text-base md:text-sm"
+                enterKeyHint="send"
               />
+              <Button type="button" variant="ghost" size="icon" aria-label="Voice input (coming soon)">
+                <Mic className="h-4 w-4" />
+              </Button>
               <Button
                 type="submit"
-                className="rounded-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                className="rounded-full bg-purple-600 hover:bg-purple-700 text-white"
+                aria-label="Send"
                 disabled={(!!input.trim() === false && !hasFiles) || isLoading}
               >
                 <Send className="h-4 w-4" />

@@ -30,7 +30,7 @@ export default function ChatSidebar({
       <div className="p-3 border-b border-border">
         <Button
           onClick={onNewChat}
-          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+          className="w-full bg-purple-600 hover:bg-purple-700 text-white"
           aria-label="Start new chat"
         >
           <Plus className="mr-2 h-4 w-4" />

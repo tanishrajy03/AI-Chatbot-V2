@@ -1,5 +1,6 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from litellm import completion
 from dotenv import load_dotenv
 import os
@@ -9,9 +10,17 @@ from sentence_transformers import SentenceTransformer
 # Load environment variables
 load_dotenv()
 
-# Flask setup
-app = Flask(__name__)
-CORS(app)
+# FastAPI setup
+app = FastAPI()
+
+# CORS setup
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # adjust for security in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Pinecone setup
 pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
@@ -42,8 +51,13 @@ RESPONSE FORMAT:
 SPECIALTIES: Python, JavaScript, web development, debugging, project architecture, best practices.
 """
 
+# Pydantic schema for request body
+class ChatRequest(BaseModel):
+    message: str
+    session_id: str = "default"
+
 # Helper to store message in Pinecone
-def store_message(session_id, role, content):
+def store_message(session_id: str, role: str, content: str):
     vector = embedder.encode(content).tolist()
     index.upsert([
         {
@@ -54,7 +68,7 @@ def store_message(session_id, role, content):
     ])
 
 # Helper to retrieve memory
-def retrieve_memory(session_id, query, top_k=5):
+def retrieve_memory(session_id: str, query: str, top_k: int = 5):
     vector = embedder.encode(query).tolist()
     results = index.query(
         vector=vector,
@@ -68,16 +82,14 @@ def retrieve_memory(session_id, query, top_k=5):
         past_msgs.append({"role": meta["role"], "content": meta["content"]})
     return past_msgs
 
-
-@app.route('/chat', methods=['POST'])
-def chat():
+@app.post("/chat")
+async def chat(request: ChatRequest):
     try:
-        data = request.json
-        user_message = data.get('message', '')
-        session_id = data.get('session_id', 'default')  # track user sessions
+        user_message = request.message
+        session_id = request.session_id
 
         if not user_message:
-            return jsonify({'error': 'No message provided'}), 400
+            return {"error": "No message provided"}
 
         # 🔹 Retrieve past memory
         memory = retrieve_memory(session_id, user_message)
@@ -99,15 +111,9 @@ def chat():
         store_message(session_id, "user", user_message)
         store_message(session_id, "assistant", ai_response)
 
-        return jsonify({'response': ai_response})
+        return {"response": ai_response}
 
     except Exception as e:
         print(f"Error occurred: {str(e)}")
-        return jsonify({
-            'error': 'Sorry, I encountered an error processing your request. Please try again.'
-        }), 500
+        return {"error": "Sorry, I encountered an error processing your request. Please try again."}
 
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)

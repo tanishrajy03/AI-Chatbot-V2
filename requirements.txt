@@ -1,7 +1,7 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from litellm import completion
-from dotenv import load_dotenv
-import os
-from pinecone import Pinecone
-from sentence_transformers import SentenceTransformer
+fastapi
+uvicorn
+litellm
+python-dotenv
+pinecone-client
+sentence-transformers
+torch

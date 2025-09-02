@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from litellm import completion
 from dotenv import load_dotenv
 import os
-from pinecone import Pinecone
+from pinecone import Pinecone, ServerlessSpec
 from sentence_transformers import SentenceTransformer
 
 # Load environment variables
@@ -25,6 +25,17 @@ app.add_middleware(
 # Pinecone setup
 pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
 index_name = "chat-memory"
+
+pc.create_index(
+    name=index_name,
+    dimension=1024,
+    metric="cosine",
+    spec=ServerlessSpec(
+        cloud="aws",
+        region=os.getenv("PINECONE_ENVIRONMENT")
+    )
+)
+
 index = pc.Index(index_name)
 
 # Embedding model

@@ -26,20 +26,24 @@ app.add_middleware(
 pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
 index_name = "chat-memory"
 
-pc.create_index(
-    name=index_name,
-    dimension=1024,
-    metric="cosine",
-    spec=ServerlessSpec(
-        cloud="aws",
-        region=os.getenv("PINECONE_ENVIRONMENT")
+# Load embedding model
+embedder = SentenceTransformer("all-MiniLM-L6-v2")
+embed_dim = embedder.get_sentence_embedding_dimension()
+
+# Create index only if it doesn’t exist
+existing_indexes = [i["name"] for i in pc.list_indexes()]
+if index_name not in existing_indexes:
+    pc.create_index(
+        name=index_name,
+        dimension=1024,   # ✅ auto from model
+        metric="cosine",
+        spec=ServerlessSpec(
+            cloud="aws",
+            region=os.getenv("PINECONE_ENVIRONMENT")
+        )
     )
-)
 
 index = pc.Index(index_name)
-
-# Embedding model
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
 SYSTEM_PROMPT = """You are a friendly and expert coding assistant. 
 Always respond in a conversational, encouraging tone. 
@@ -127,3 +131,8 @@ async def chat(request: ChatRequest):
     except Exception as e:
         print(f"Error occurred: {str(e)}")
         return {"error": "Sorry, I encountered an error processing your request. Please try again."}
+
+# ✅ Health check endpoint
+@app.get("/health")
+def health():
+    return {"status": "ok"}
